@@ -106,10 +106,6 @@ vec4 lightContrib(vec4 pos, vec4 amb, vec4 diff, vec4 spec) {
 
 void main() {
     vec4 fragColor = Global_ambient * material.ambient;
-    int AMBIENT = 0;
-    int DIFFUSE = 1;
-    int SPECULAR = 2;
-    int POSITION = 3;
 
     fragColor = fragColor + lightContrib(
         light0_pos, light0_amb, light0_diff, light0_spec);
@@ -211,17 +207,6 @@ class TestContext( BaseContext ):
                     3, gl.GL_FLOAT, False, stride, self.coords+(5*4)
                 )
 
-                gl.glEnableVertexAttribArray( self.Vertex_position_loc )
-                gl.glEnableVertexAttribArray( self.Vertex_normal_loc )
-                gl.glVertexAttribPointer( 
-                    self.Vertex_position_loc, 
-                    3, gl.GL_FLOAT,False, stride, self.coords
-                )
-                gl.glVertexAttribPointer( 
-                    self.Vertex_normal_loc, 
-                    3, gl.GL_FLOAT,False, stride, self.coords + (5 * 4)
-                )
-                
                 gl.glDrawElements(
                     gl.GL_TRIANGLES,
                     self.count,
