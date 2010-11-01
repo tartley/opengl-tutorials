@@ -11,9 +11,6 @@ from OpenGLContext.scenegraph.basenodes import Sphere
 from OpenGL import GL as gl
 from OpenGL.GL.shaders import compileProgram, compileShader
 
-LIGHT_COUNT = 3
-LIGHT_SIZE = 4
-
 # EC for 'eye-space coords'
 
 LIGHT_CONST = '''
@@ -43,15 +40,6 @@ varying vec3 light2_ec_location;
 varying vec3 light2_ec_half;
 
 varying vec3 baseNormal;
-'''
-
-MATERIAL_STRUCT = '''
-struct Material {
-    vec4 ambient;
-    vec4 diffuse;
-    vec4 specular;
-    float shininess;
-};
 '''
 
 DLIGHT_FUNC = '''
