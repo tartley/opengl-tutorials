@@ -1,8 +1,7 @@
 '''
 This tutorial builds on earlier tutorials by adding:
- * Multiple Lights
- * GLSL Structures (for defining a Material)
- * GLSL Arrays/Looping (for processing multiple lights)
+ # Optimizing the directional-lights, doing pre-calcs in the Vertex shader
+ # Using constant/common declaration blocks
 '''
 import sys
 
@@ -12,6 +11,39 @@ from OpenGLContext.scenegraph.basenodes import Sphere
 from OpenGL import GL as gl
 from OpenGL.GL.shaders import compileProgram, compileShader
 
+LIGHT_COUNT = 3
+LIGHT_SIZE = 4
+
+# EC for 'eye-space coords'
+
+LIGHT_CONST = '''
+uniform vec4 light0_pos;
+uniform vec4 light0_amb;
+uniform vec4 light0_diff;
+uniform vec4 light0_spec;
+
+uniform vec4 light1_pos;
+uniform vec4 light1_amb;
+uniform vec4 light1_diff;
+uniform vec4 light1_spec;
+
+uniform vec4 light2_pos;
+uniform vec4 light2_amb;
+uniform vec4 light2_diff;
+uniform vec4 light2_spec;
+
+// precalc these values in vertex shader (which is quicker, since it is
+// excuted once per vertex, not once per fragment) and use the results
+// in the fragment shader
+varying vec3 light0_ec_location;
+varying vec3 light0_ec_half;
+varying vec3 light1_ec_location;
+varying vec3 light1_ec_half;
+varying vec3 light2_ec_location;
+varying vec3 light2_ec_half;
+
+varying vec3 baseNormal;
+'''
 
 MATERIAL_STRUCT = '''
 struct Material {
@@ -35,66 +67,57 @@ vec2 dLight(
     ));
     float n_dot_half = 0.0;
     if (n_dot_pos > -.05) {
-        n_dot_half = pow(max(0.0,dot( 
-            half_light, frag_normal
-        )), shininess);
+        n_dot_half = pow(
+            max(
+                0.0,
+                dot(half_light, frag_normal)
+            ),
+            shininess);
     }
     return vec2( n_dot_pos, n_dot_half);
 }		
 '''
 
-VERTEX_SHADER = '''
+VERTEX_SHADER = LIGHT_CONST + '''
 attribute vec3 Vertex_position;
 attribute vec3 Vertex_normal;
-varying vec3 baseNormal;
 void main() {
-    gl_Position = gl_ModelViewProjectionMatrix * vec4( 
-        Vertex_position, 1.0
-    );
+    gl_Position = gl_ModelViewProjectionMatrix * vec4( Vertex_position, 1.0);
     baseNormal = gl_NormalMatrix * normalize(Vertex_normal);
+
+    // half-vector calculation 
+    light0_ec_location = normalize(gl_NormalMatrix * light0_pos.xyz);
+    light0_ec_half = normalize( light0_ec_location - vec3( 0,0,-1 ));
+
+    light1_ec_location = normalize(gl_NormalMatrix * light1_pos.xyz);
+    light1_ec_half = normalize( light1_ec_location - vec3( 0,0,-1 ));
+
+    light2_ec_location = normalize(gl_NormalMatrix * light2_pos.xyz);
+    light2_ec_half = normalize( light2_ec_location - vec3( 0,0,-1 ));
 }
 '''
 
-FRAGMENT_SHADER = DLIGHT_FUNC + MATERIAL_STRUCT + '''
+FRAGMENT_SHADER = LIGHT_CONST + DLIGHT_FUNC + '''
+struct Material {
+    vec4 ambient;
+    vec4 diffuse;
+    vec4 specular;
+    float shininess;
+};
 uniform Material material;
 uniform vec4 Global_ambient;
 
-// I got a link error: Fragment shader not supported by HW. Assuming it's
-// because of this array of uniforms, which I've reimplimented as a series
-// of 12 scalars, and unrolled the for loop which used to operate on the array
-//uniform vec4 lights[ 12 ]; // 3 possible lights 4 vec4's each 
-
-uniform vec4 light0_amb;
-uniform vec4 light0_diff;
-uniform vec4 light0_spec;
-uniform vec4 light0_pos;
-
-uniform vec4 light1_amb;
-uniform vec4 light1_diff;
-uniform vec4 light1_spec;
-uniform vec4 light1_pos;
-
-uniform vec4 light2_amb;
-uniform vec4 light2_diff;
-uniform vec4 light2_spec;
-uniform vec4 light2_pos;
-
-varying vec3 baseNormal;
-
-
-vec4 lightContrib(vec4 pos, vec4 amb, vec4 diff, vec4 spec) {
-    // normalized eye-coordinate Light location
-    vec4 npos = normalize(pos);
-    vec3 EC_Light_location = normalize(
-        gl_NormalMatrix * npos.xyz
-    );
-    // half-vector calculation 
-    vec3 Light_half = normalize(
-        EC_Light_location - vec3( 0,0,-1 )
-    );
+vec4 lightContrib(
+    vec4 pos,
+    vec4 amb,
+    vec4 diff,
+    vec4 spec,
+    vec3 ec_location,
+    vec3 ec_half_angle
+) {
     vec2 weights = dLight(
-        EC_Light_location,
-        Light_half,
+        ec_location,
+        ec_half_angle,
         baseNormal,
         material.shininess
     );
@@ -107,12 +130,16 @@ vec4 lightContrib(vec4 pos, vec4 amb, vec4 diff, vec4 spec) {
 
 void main() {
     vec4 fragColor = Global_ambient * material.ambient;
+
     fragColor = fragColor + lightContrib(
-        light0_pos, light0_amb, light0_diff, light0_spec);
+        light0_pos, light0_amb, light0_diff, light0_spec,
+        light0_ec_location, light0_ec_half);
     fragColor = fragColor + lightContrib(
-        light1_pos, light1_amb, light1_diff, light1_spec);
+        light1_pos, light1_amb, light1_diff, light1_spec,
+        light1_ec_location, light1_ec_half);
     fragColor = fragColor + lightContrib(
-        light2_pos, light2_amb, light2_diff, light2_spec);
+        light2_pos, light2_amb, light2_diff, light2_spec,
+        light2_ec_location, light2_ec_half);
 
     gl_FragColor = fragColor;
 }
@@ -131,9 +158,9 @@ UNIFORM_VALUES = {
     'material.shininess': (50,),
 
     'light0_pos':  (0.0, 8.0, 0.0, 0.0),
-    'light0_amb':  (0.8, 0.8, 0.8, 1.0),
-    'light0_diff': (0.8, 0.8, 0.8, 1.0),
-    'light0_spec': (0.8, 0.8, 0.8, 1.0),
+    'light0_amb':  (0.5, 0.5, 0.5, 1.0),
+    'light0_diff': (0.5, 0.5, 0.5, 1.0),
+    'light0_spec': (0.5, 0.5, 0.5, 1.0),
 
     'light1_pos':  (2.0, 4.0, 8.0, 0.0),
     'light1_amb':  (0.2, 0.5, 0.1, 1.0),
@@ -148,8 +175,9 @@ UNIFORM_VALUES = {
 
 class TestContext( BaseContext ):
     '''
-    creates a simple vertex shader
+    creates a simple shader
     '''
+
     def OnInit( self ):
         try:
             self.shader = compileProgram(
@@ -207,17 +235,6 @@ class TestContext( BaseContext ):
                     3, gl.GL_FLOAT, False, stride, self.coords+(5*4)
                 )
 
-                gl.glEnableVertexAttribArray( self.Vertex_position_loc )
-                gl.glEnableVertexAttribArray( self.Vertex_normal_loc )
-                gl.glVertexAttribPointer( 
-                    self.Vertex_position_loc, 
-                    3, gl.GL_FLOAT,False, stride, self.coords
-                )
-                gl.glVertexAttribPointer( 
-                    self.Vertex_normal_loc, 
-                    3, gl.GL_FLOAT,False, stride, self.coords + (5 * 4)
-                )
-                
                 gl.glDrawElements(
                     gl.GL_TRIANGLES,
                     self.count,
