@@ -1,28 +1,21 @@
 '''
 This tutorial builds on earlier tutorials by adding:
- * Multiple Lights
- * GLSL Structures (for defining a Material)
- * GLSL Arrays/Looping (for processing multiple lights)
+    * 	specular lighting (Phong Lighting)
+    * 	specular lighting (Blinn-Phong Lighting)
+    * 	per-fragment lighting
+    * 	Sphere geometry object (indexed rendering)
 '''
 import sys
 
 from OpenGLContext import testingcontext
 BaseContext = testingcontext.getInteractive()
+from OpenGLContext.arrays import array
 from OpenGLContext.scenegraph.basenodes import Sphere
 from OpenGL import GL as gl
+from OpenGL.arrays import vbo
 from OpenGL.GL.shaders import compileProgram, compileShader
 
-
-MATERIAL_STRUCT = '''
-struct Material {
-    vec4 ambient;
-    vec4 diffuse;
-    vec4 specular;
-    float shininess;
-};
-'''
-
-DLIGHT_FUNC = '''
+DLIGHT_FUNC = """
 vec2 dLight( 
     in vec3 light_pos, // light position
     in vec3 half_light, // half-way vector between light and view
@@ -41,7 +34,7 @@ vec2 dLight(
     }
     return vec2( n_dot_pos, n_dot_half);
 }		
-'''
+"""
 
 VERTEX_SHADER = '''
 attribute vec3 Vertex_position;
@@ -55,37 +48,21 @@ void main() {
 }
 '''
 
-FRAGMENT_SHADER = DLIGHT_FUNC + MATERIAL_STRUCT + '''
-uniform Material material;
+FRAGMENT_SHADER = DLIGHT_FUNC + '''
 uniform vec4 Global_ambient;
-
-// I got a link error: Fragment shader not supported by HW. Assuming it's
-// because of this array of uniforms, which I've reimplimented as a series
-// of 12 scalars, and unrolled the for loop which used to operate on the array
-//uniform vec4 lights[ 12 ]; // 3 possible lights 4 vec4's each 
-
-uniform vec4 light0_amb;
-uniform vec4 light0_diff;
-uniform vec4 light0_spec;
-uniform vec4 light0_pos;
-
-uniform vec4 light1_amb;
-uniform vec4 light1_diff;
-uniform vec4 light1_spec;
-uniform vec4 light1_pos;
-
-uniform vec4 light2_amb;
-uniform vec4 light2_diff;
-uniform vec4 light2_spec;
-uniform vec4 light2_pos;
-
+uniform vec4 Light_ambient;
+uniform vec4 Light_diffuse;
+uniform vec4 Light_specular;
+uniform vec3 Light_location;
+uniform float Material_shininess;
+uniform vec4 Material_specular;
+uniform vec4 Material_ambient;
+uniform vec4 Material_diffuse;
 varying vec3 baseNormal;
-
-
-vec4 lightContrib(vec4 pos, vec4 amb, vec4 diff, vec4 spec) {
+void main() {
     // normalized eye-coordinate Light location
     vec3 EC_Light_location = normalize(
-        gl_NormalMatrix * pos.xyz
+        gl_NormalMatrix * Light_location
     );
     // half-vector calculation 
     vec3 Light_half = normalize(
@@ -95,60 +72,18 @@ vec4 lightContrib(vec4 pos, vec4 amb, vec4 diff, vec4 spec) {
         EC_Light_location,
         Light_half,
         baseNormal,
-        material.shininess
+        Material_shininess
     );
-    return 
-        (amb * material.ambient) + 
-        (diff * material.diffuse * weights.x) +
-        (spec * material.specular * weights.y);
-}
-
-
-void main() {
-    vec4 fragColor = Global_ambient * material.ambient;
-    int AMBIENT = 0;
-    int DIFFUSE = 1;
-    int SPECULAR = 2;
-    int POSITION = 3;
-
-    fragColor = fragColor + lightContrib(
-        light0_pos, light0_amb, light0_diff, light0_spec);
-    fragColor = fragColor + lightContrib(
-        light1_pos, light1_amb, light1_diff, light1_spec);
-    fragColor = fragColor + lightContrib(
-        light2_pos, light2_amb, light2_diff, light2_spec);
-
-    gl_FragColor = fragColor;
+    gl_FragColor = clamp( 
+    (
+        (Global_ambient * Material_ambient)
+        + (Light_ambient * Material_ambient)
+        + (Light_diffuse * Material_diffuse * weights.x)
+        // material's shininess is the only change here...
+        + (Light_specular * Material_specular * weights.y)
+    ), 0.0, 1.0);
 }
 '''
-
-ATTRIBUTES = [
-    'Vertex_position',
-    'Vertex_normal',
-]
-UNIFORM_VALUES = {
-    'Global_ambient': (.05,.05,.05,1.0),
-
-    'material.ambient': (.2,.2,.2,1.0),
-    'material.diffuse': (.5,.5,.5,1.0),
-    'material.specular': (.9,.9,.9,1.0),
-    'material.shininess': (.995,),
-
-    'light0_pos':  (4.0,2.0,10.0,0.0),
-    'light0_amb':  (.05,.05,.05,1.0),
-    'light0_diff': (.3,.3,.3,1.0),
-    'light0_spec': (1.0,0.0,0.0,1.0),
-
-    'light1_pos':  (-4.0,2.0,10.0,0.0),
-    'light1_amb':  (.05,.05,.05,1.0),
-    'light1_diff': (.3,.3,.3,1.0),
-    'light1_spec': (1.0,1.0,1.0,1.0),
-
-    'light2_pos':  (-4.0,2.0,-10.0,0.0),
-    'light2_amb':  (.05,.05,.05,1.0),
-    'light2_diff': (.3,.3,.3,1.0),
-    'light2_spec': (0.0,0.0,1.0,1.0),
-}
 
 class TestContext( BaseContext ):
     '''
@@ -166,19 +101,31 @@ class TestContext( BaseContext ):
 
         self.coords, self.indices, self.count = Sphere(radius=1).compile()
 
-        self.uniforms = {}
-        for name in UNIFORM_VALUES:
-            location = gl.glGetUniformLocation( self.shader, name )
-            if location in (None,-1):
-                print 'Warning, no uniform: %s'%( name )
-            self.uniforms[name] = location
+        for uniform in (
+            'Global_ambient',
+            'Light_ambient',
+            'Light_diffuse',
+            'Light_location',
+            'Light_specular',
+            'Material_ambient',
+            'Material_diffuse',
+            'Material_shininess',
+            'Material_specular',
+        ):
+            location = gl.glGetUniformLocation( self.shader, uniform )
+            if location in ( None, -1 ):
+                print 'Warning, no uniform: %s'%( uniform )
+            setattr( self, uniform+ '_loc', location )
 
-        for name in ATTRIBUTES:
-			location = gl.glGetAttribLocation( self.shader, name )
-			if location in (None,-1):
-				print 'Warning, no attribute: %s'%( name )
-			setattr( self, name + '_loc', location )
-
+        for attribute in (
+            'Vertex_position',
+            'Vertex_normal',
+        ):
+            location = gl.glGetAttribLocation( self.shader, attribute )
+            if location in ( None, -1 ):
+                print 'Warning, no attribute: %s'%( attribute )
+            setattr( self, attribute + '_loc', location )
+        
 
     def Render( self, mode ):
         '''
@@ -190,15 +137,17 @@ class TestContext( BaseContext ):
             self.indices.bind()
             stride = self.coords.data[0].nbytes
             try:
-                for uniform, value in UNIFORM_VALUES.items():
-                    location = self.uniforms.get( uniform )
-                    if location not in (None,-1):
-                        if len(value) == 4:
-                            gl.glUniform4f( location, *value )
-                        elif len(value) == 3:
-                            gl.glUniform3f( location, *value )
-                        elif len(value) == 1:
-                            gl.glUniform1f( location, *value )
+                gl.glUniform4f( self.Global_ambient_loc, 0.1, 0.1, 0.1, 1.0 )
+
+                gl.glUniform4f( self.Light_ambient_loc,  0.2, 0.2, 0.2, 1.0 )
+                gl.glUniform4f( self.Light_diffuse_loc,  0.8, 0.8, 0.8, 1.0 )
+                gl.glUniform4f( self.Light_specular_loc, 0.8, 0.8, 0.8, 1.0 )
+                gl.glUniform3f( self.Light_location_loc, 6,2,4 )
+
+                gl.glUniform4f( self.Material_ambient_loc,  0.1, 0.2, 0.1, 1.0)
+                gl.glUniform4f( self.Material_diffuse_loc,  0.2, 0.8, 0.4, 1.0)
+                gl.glUniform4f( self.Material_specular_loc, 0.2, 0.8, 0.4, 1.0)
+                gl.glUniform1f( self.Material_shininess_loc, 50)
 
                 gl.glEnableVertexAttribArray( self.Vertex_position_loc )
                 gl.glEnableVertexAttribArray( self.Vertex_normal_loc )
